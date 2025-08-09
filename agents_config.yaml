@@ -1,3 +1,8 @@
+agnew:
+  address: inj1t5lpydjkuewgpa40ggu33fsn6d0gdjhl4mg062
+  created_at: '2025-08-09T14:24:11.347037'
+  network: testnet
+  private_key: bf9a69dc6987fa0816e5ad625a2b6c23aa06baae665a5de3a22c1f5dc6460b8c
 hua:
   address: inj1qfqfax6m5a8agfdgz23tzygmrvyu88n2lcv73h
   created_at: '2025-08-09T01:09:12.487514'

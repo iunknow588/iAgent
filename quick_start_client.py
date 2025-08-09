@@ -20,6 +20,7 @@ import argparse
 import json
 from decimal import Decimal
 from typing import Dict, Optional
+from pyinjective.core.network import Network
 from app.agent_manager import AgentManager
 
 
@@ -36,6 +37,10 @@ class InjectiveCLI:
         self.session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.animation_stop = False
         self.agent_manager = AgentManager()
+        
+        # 会话管理
+        self.session_start_time = datetime.now()
+        self.command_history = []
 
     def clear_screen(self):
         """Clear the terminal screen."""
@@ -69,6 +74,15 @@ class InjectiveCLI:
         # Clear the animation line when done
         sys.stdout.write("\r" + " " * 50 + "\r")
         sys.stdout.flush()
+
+    def _format_network_details(self) -> str:
+        """返回包含实际链信息的网络字符串"""
+        try:
+            current_net = self.agent_manager.get_current_network()
+            inj_net = Network.testnet() if current_net == "testnet" else Network.mainnet()
+            return f"{current_net.upper()} (chain_id: {inj_net.chain_id}, fee_denom: {inj_net.fee_denom})"
+        except Exception:
+            return self.agent_manager.get_current_network().upper()
 
     def list_agents_by_network(self, agents, environment):
         if not agents and self.agent_manager.current_network == environment:
@@ -203,7 +217,7 @@ class InjectiveCLI:
         )
         print(f"{Fore.CYAN}Connected to: {self.api_url}")
         print(f"Session ID: {self.session_id}")
-        print(f"Current Network: {self.agent_manager.get_current_network().upper()}")
+        print(f"Current Network: {self._format_network_details()}")
 
         current_agent = self.agent_manager.get_current_agent()
         if current_agent:
@@ -219,6 +233,7 @@ class InjectiveCLI:
         print("General: quit, clear, help, history, ping, debug, session")
         print("Network: switch_network [mainnet|testnet]")
         print("Agents: create_agent, delete_agent, switch_agent, list_agents")
+        print("Blockchain: check balance, get orders, show markets, view positions")
         print("=" * 80 + Style.RESET_ALL)
 
     def handle_agent_commands(self, command: str, args: str) -> bool:
@@ -308,9 +323,58 @@ class InjectiveCLI:
                 else:
                     self.list_agents_by_network(testnet_agents, "testnet")
                 return True
+                
+            elif command == "session":
+                # 显示当前会话信息
+                print(f"{Fore.CYAN}📋 当前会话信息{Style.RESET_ALL}")
+                print(f"   会话ID: {self.session_id}")
+                print(f"   服务器地址: {self.api_url}")
+                print(f"   调试模式: {'开启' if self.debug else '关闭'}")
+                
+                # 显示当前网络信息
+                current_network = self.agent_manager.get_current_network()
+                print(f"   当前网络: {current_network.upper()}")
+                
+                # 显示当前代理信息
+                current_agent = self.agent_manager.get_current_agent()
+                if current_agent:
+                    print(f"   当前代理: {current_agent.get('name', 'unknown')}")
+                    print(f"   代理地址: {current_agent.get('address', 'unknown')}")
+                    print(f"   创建时间: {current_agent.get('created_at', 'unknown')}")
+                else:
+                    print(f"   当前代理: {Fore.YELLOW}未选择{Style.RESET_ALL}")
+                
+                # 显示会话统计信息
+                print(f"\n{Fore.CYAN}📊 会话统计{Style.RESET_ALL}")
+                print(f"   会话开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"   运行时长: {self._get_session_duration()}")
+                
+                return True
+                
+            elif command == "debug":
+                # 切换调试模式
+                self.debug = not self.debug
+                status = "开启" if self.debug else "关闭"
+                print(f"{Fore.GREEN}✅ 调试模式已{status}{Style.RESET_ALL}")
+                return True
+                
+            elif command == "history":
+                # 显示命令历史
+                print(f"{Fore.CYAN}📜 命令历史{Style.RESET_ALL}")
+                if hasattr(self, 'command_history') and self.command_history:
+                    for i, cmd in enumerate(self.command_history[-10:], 1):  # 显示最近10条
+                        print(f"   {i:2d}. {cmd}")
+                else:
+                    print(f"   {Fore.YELLOW}暂无命令历史{Style.RESET_ALL}")
+                return True
+                
+            # 处理复合命令（如 "check balance", "get balance" 等）
+            elif command in ["check", "get", "show", "view"]:
+                return self._handle_composite_command(command, args)
+                
             else:
                 # 检查是否是拼写错误
-                known_commands = ["help", "ping", "switch_network", "create_agent", "delete_agent", "switch_agent", "list_agents"]
+                known_commands = ["help", "ping", "switch_network", "create_agent", "delete_agent", "switch_agent", "list_agents", "session", "debug", "history", "check", "get", "show", "view"]
                 suggestions = []
                 
                 for known_cmd in known_commands:
@@ -350,6 +414,254 @@ class InjectiveCLI:
         # 计算公共字符数
         common_chars = sum(1 for c in s2 if c in s1)
         return common_chars / len(s2)
+    
+    def _get_session_duration(self) -> str:
+        """计算会话运行时长"""
+        duration = datetime.now() - self.session_start_time
+        total_seconds = int(duration.total_seconds())
+        
+        if total_seconds < 60:
+            return f"{total_seconds}秒"
+        elif total_seconds < 3600:
+            minutes = total_seconds // 60
+            seconds = total_seconds % 60
+            return f"{minutes}分{seconds}秒"
+        else:
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            return f"{hours}小时{minutes}分"
+    
+    def _add_to_history(self, command: str):
+        """添加命令到历史记录"""
+        if command.strip() and command not in ["", "clear", "help"]:
+            self.command_history.append(command)
+            # 保持历史记录在合理范围内
+            if len(self.command_history) > 50:
+                self.command_history.pop(0)
+    
+    def _handle_composite_command(self, command: str, args: str) -> bool:
+        """处理复合命令（如 check balance, get balance 等）"""
+        if not args:
+            print(f"{Fore.YELLOW}💡 请指定要{command}的内容{Style.RESET_ALL}")
+            print(f"   例如: {command} balance, {command} orders, {command} markets")
+            return True
+        
+        # 解析子命令
+        sub_command = args.lower().strip()
+        
+        if sub_command in ["balance", "balances", "bal"]:
+            return self._handle_balance_command(command)
+        elif sub_command in ["order", "orders", "orderbook"]:
+            return self._handle_orders_command(command)
+        elif sub_command in ["market", "markets", "ticker"]:
+            return self._handle_markets_command(command)
+        elif sub_command in ["position", "positions", "pos"]:
+            return self._handle_positions_command(command)
+        elif sub_command in ["history", "hist", "transactions"]:
+            return self._handle_history_command(command)
+        else:
+            print(f"{Fore.YELLOW}❓ 未知的{command}命令: '{sub_command}'{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}💡 支持的{command}命令: balance, orders, markets, positions, history{Style.RESET_ALL}")
+            return True
+    
+    def _handle_balance_command(self, command: str) -> bool:
+        """处理余额查询命令"""
+        current_agent = self.agent_manager.get_current_agent()
+        if not current_agent:
+            print(f"{Fore.RED}❌ 请先选择代理{Style.RESET_ALL}")
+            print(f"   使用 'switch_agent' 命令选择代理")
+            return True
+        
+        print(f"{Fore.CYAN}💰 查询余额...{Style.RESET_ALL}")
+        print(f"   代理地址: {current_agent.get('address', 'unknown')}")
+        print(f"   网络: {self._format_network_details()}")
+        
+        # 调用区块链API查询余额
+        try:
+            # 构建请求数据
+            request_data = {
+                "message": "check balance",
+                "session_id": self.session_id,
+                "agent_id": current_agent.get('address'),
+                "agent_key": current_agent.get('private_key'),
+                "environment": self.agent_manager.get_current_network()
+            }
+            
+            # 发送请求到服务器
+            response = self.make_request("/chat", request_data)
+            
+            if response and "response" in response:
+                print(f"\n{Fore.GREEN}✅ 余额查询结果:{Style.RESET_ALL}")
+                self.display_response(response.get("response"), response if self.debug else None)
+                # 非调试模式下，也简要显示函数调用信息
+                if "function_call" in response and response["function_call"] and not self.debug:
+                    fc = response["function_call"]
+                    fname = fc.get("name", "unknown")
+                    fresult = fc.get("result", {})
+                    status = fresult.get("success")
+                    print(f"   函数调用: {fname} -> {'成功' if status else '失败'}")
+                    if isinstance(fresult, dict) and not status and fresult.get("error"):
+                        print(f"   错误: {fresult.get('error')}")
+            else:
+                print(f"{Fore.RED}❌ 查询失败: 服务器无响应{Style.RESET_ALL}")
+                
+        except Exception as e:
+            print(f"{Fore.RED}❌ 查询失败: {str(e)}{Style.RESET_ALL}")
+            print(f"   请确保服务器正在运行并且代理配置正确")
+        
+        return True
+    
+    def _handle_orders_command(self, command: str) -> bool:
+        """处理订单查询命令"""
+        current_agent = self.agent_manager.get_current_agent()
+        if not current_agent:
+            print(f"{Fore.RED}❌ 请先选择代理{Style.RESET_ALL}")
+            print(f"   使用 'switch_agent' 命令选择代理")
+            return True
+        
+        print(f"{Fore.CYAN}📋 查询订单...{Style.RESET_ALL}")
+        print(f"   代理地址: {current_agent.get('address', 'unknown')}")
+        print(f"   网络: {self._format_network_details()}")
+        
+        try:
+            request_data = {
+                "message": "check orders",
+                "session_id": self.session_id,
+                "agent_id": current_agent.get('address'),
+                "agent_key": current_agent.get('private_key'),
+                "environment": self.agent_manager.get_current_network()
+            }
+            
+            response = self.make_request("/chat", request_data)
+            
+            if response and "response" in response:
+                print(f"\n{Fore.GREEN}✅ 订单查询结果:{Style.RESET_ALL}")
+                self.display_response(response.get("response"), response if self.debug else None)
+                if "function_call" in response and response["function_call"] and not self.debug:
+                    fc = response["function_call"]
+                    fname = fc.get("name", "unknown")
+                    print(f"   函数调用: {fname}")
+            else:
+                print(f"{Fore.RED}❌ 查询失败: 服务器无响应{Style.RESET_ALL}")
+                
+        except Exception as e:
+            print(f"{Fore.RED}❌ 查询失败: {str(e)}{Style.RESET_ALL}")
+        
+        return True
+    
+    def _handle_markets_command(self, command: str) -> bool:
+        """处理市场查询命令"""
+        current_agent = self.agent_manager.get_current_agent()
+        if not current_agent:
+            print(f"{Fore.RED}❌ 请先选择代理{Style.RESET_ALL}")
+            print(f"   使用 'switch_agent' 命令选择代理")
+            return True
+        
+        print(f"{Fore.CYAN}📊 查询市场数据...{Style.RESET_ALL}")
+        print(f"   代理地址: {current_agent.get('address', 'unknown')}")
+        print(f"   网络: {self._format_network_details()}")
+        
+        try:
+            request_data = {
+                "message": "show markets",
+                "session_id": self.session_id,
+                "agent_id": current_agent.get('address'),
+                "agent_key": current_agent.get('private_key'),
+                "environment": self.agent_manager.get_current_network()
+            }
+            
+            response = self.make_request("/chat", request_data)
+            
+            if response and "response" in response:
+                print(f"\n{Fore.GREEN}✅ 市场数据查询结果:{Style.RESET_ALL}")
+                self.display_response(response.get("response"), response if self.debug else None)
+                if "function_call" in response and response["function_call"] and not self.debug:
+                    fc = response["function_call"]
+                    fname = fc.get("name", "unknown")
+                    print(f"   函数调用: {fname}")
+            else:
+                print(f"{Fore.RED}❌ 查询失败: 服务器无响应{Style.RESET_ALL}")
+                
+        except Exception as e:
+            print(f"{Fore.RED}❌ 查询失败: {str(e)}{Style.RESET_ALL}")
+        
+        return True
+    
+    def _handle_positions_command(self, command: str) -> bool:
+        """处理持仓查询命令"""
+        current_agent = self.agent_manager.get_current_agent()
+        if not current_agent:
+            print(f"{Fore.RED}❌ 请先选择代理{Style.RESET_ALL}")
+            print(f"   使用 'switch_agent' 命令选择代理")
+            return True
+        
+        print(f"{Fore.CYAN}📈 查询持仓...{Style.RESET_ALL}")
+        print(f"   代理地址: {current_agent.get('address', 'unknown')}")
+        print(f"   网络: {self._format_network_details()}")
+        
+        try:
+            request_data = {
+                "message": "check positions",
+                "session_id": self.session_id,
+                "agent_id": current_agent.get('address'),
+                "agent_key": current_agent.get('private_key'),
+                "environment": self.agent_manager.get_current_network()
+            }
+            
+            response = self.make_request("/chat", request_data)
+            
+            if response and "response" in response:
+                print(f"\n{Fore.GREEN}✅ 持仓查询结果:{Style.RESET_ALL}")
+                self.display_response(response.get("response"), response if self.debug else None)
+                if "function_call" in response and response["function_call"] and not self.debug:
+                    fc = response["function_call"]
+                    fname = fc.get("name", "unknown")
+                    print(f"   函数调用: {fname}")
+            else:
+                print(f"{Fore.RED}❌ 查询失败: 服务器无响应{Style.RESET_ALL}")
+                
+        except Exception as e:
+            print(f"{Fore.RED}❌ 查询失败: {str(e)}{Style.RESET_ALL}")
+        
+        return True
+    
+    def _handle_history_command(self, command: str) -> bool:
+        """处理历史记录查询命令"""
+        current_agent = self.agent_manager.get_current_agent()
+        if not current_agent:
+            print(f"{Fore.RED}❌ 请先选择代理{Style.RESET_ALL}")
+            print(f"   使用 'switch_agent' 命令选择代理")
+            return True
+        
+        print(f"{Fore.CYAN}📜 查询交易历史...{Style.RESET_ALL}")
+        print(f"   代理地址: {current_agent.get('address', 'unknown')}")
+        print(f"   网络: {self._format_network_details()}")
+        
+        try:
+            request_data = {
+                "message": "check history",
+                "session_id": self.session_id,
+                "agent_id": current_agent.get('address'),
+                "agent_key": current_agent.get('private_key'),
+                "environment": self.agent_manager.get_current_network()
+            }
+            
+            response = self.make_request("/chat", request_data)
+            
+            if response and "response" in response:
+                print(f"\n{Fore.GREEN}✅ 交易历史查询结果:{Style.RESET_ALL}")
+                self.display_response(response.get("response"), response if self.debug else None)
+                if "function_call" in response and response["function_call"] and not self.debug:
+                    fc = response["function_call"]
+                    fname = fc.get("name", "unknown")
+                    print(f"   函数调用: {fname}")
+            else:
+                print(f"{Fore.RED}❌ 查询失败: 服务器无响应{Style.RESET_ALL}")
+                
+        except Exception as e:
+            print(f"{Fore.RED}❌ 查询失败: {str(e)}{Style.RESET_ALL}")
+        
+        return True
 
     def make_request(
         self, endpoint: str, data: Optional[dict] = None, params: Optional[dict] = None
@@ -401,6 +713,9 @@ class InjectiveCLI:
                 parts = user_input.split(maxsplit=1)
                 command = parts[0].lower()
                 args = parts[1] if len(parts) > 1 else ""
+
+                # Add command to history
+                self._add_to_history(user_input)
 
                 # Handle agent-specific commands
                 if self.handle_agent_commands(command, args):

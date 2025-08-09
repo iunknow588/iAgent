@@ -101,7 +101,7 @@ class FunctionSchemaLoader:
             except Exception as e:
                 print(f"Error loading schema from {path}: {str(e)}")
 
-        return combined_schemas["functions"]
+        return combined_schemas
 
     @staticmethod
     def validate_schema(schema: dict) -> bool:
