@@ -130,6 +130,26 @@ ENV/
 env.bak/
 venv.bak/
 
+# Sensitive files
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cert
+secrets.json
+config.json
+credentials.json
+*.log
+*.backup
+.env.backup.*
+
+# API Keys and Secrets
+*_api_key*
+*_secret*
+*_token*
+*_password*
+
 # Spyder project settings
 .spyderproject
 .spyproject

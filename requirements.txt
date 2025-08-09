@@ -6,3 +6,8 @@ colorama
 python-dotenv
 quart
 pyyaml
+requests>=2.31.0
+urllib3>=2.0.0,<3.0.0
+chardet>=5.0.0,<6.0.0
+aiohttp
+psutil

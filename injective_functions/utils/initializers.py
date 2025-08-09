@@ -29,18 +29,25 @@ class ChainInteractor:
 
     async def init_client(self):
         """Initialize the Injective client and required components"""
-        self.client = AsyncClient(self.network)
-        self.composer = await self.client.composer()
-        await self.client.sync_timeout_height()
-        await self.client.fetch_account(self.address.to_acc_bech32())
-        self.message_broadcaster = MsgBroadcasterWithPk.new_using_simulation(
-            network=self.network, private_key=self.private_key
-        )
+        try:
+            self.client = AsyncClient(self.network)
+            self.composer = await self.client.composer()
+            await self.client.sync_timeout_height()
+            await self.client.fetch_account(self.address.to_acc_bech32())
+            self.message_broadcaster = MsgBroadcasterWithPk.new_using_simulation(
+                network=self.network, private_key=self.private_key
+            )
+        except Exception as e:
+            print(f"Failed to initialize Injective client: {str(e)}")
+            raise e
 
     async def build_and_broadcast_tx(self, msg):
         """Common function to build and broadcast transactions"""
         try:
-            await self.init_client()
+            # 确保客户端已初始化
+            if not self.client:
+                await self.init_client()
+                
             tx = (
                 Transaction()
                 .with_messages(msg)
@@ -56,7 +63,7 @@ class ChainInteractor:
             try:
                 sim_res = await self.client.simulate(sim_tx_raw_bytes)
             except RpcError as ex:
-                return {"error": str(ex)}
+                return {"success": False, "error": f"Simulation failed: {str(ex)}"}
 
             gas_price = GAS_PRICE
             gas_limit = (

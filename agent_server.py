@@ -24,15 +24,53 @@ class InjectiveChatAgent:
         # Load environment variables
         load_dotenv()
 
-        # Get API key from environment variable
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
+        # Get API configuration from environment variables
+        self.selected_model = os.getenv("SELECTED_MODEL", "auto").lower()  # auto, deepseek, openai, or chatanywhere
+        
+        # Initialize API configurations
+        self.api_configs = {}
+        
+        # DeepSeek API configuration
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        if deepseek_key:
+            self.api_configs["deepseek"] = {
+                "api_key": deepseek_key,
+                "base_url": os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com"),
+                "model": "deepseek-chat"
+            }
+        
+        # OpenAI API configuration
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            self.api_configs["openai"] = {
+                "api_key": openai_key,
+                "base_url": os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com"),
+                "model": "gpt-4o"
+            }
+        
+        # ChatAnywhere API configuration (if using chatanywhere)
+        if "api.chatanywhere.tech" in os.getenv("OPENAI_API_BASE_URL", ""):
+            self.api_configs["chatanywhere"] = {
+                "api_key": openai_key,
+                "base_url": os.getenv("OPENAI_API_BASE_URL", "https://api.chatanywhere.tech"),
+                "model": "gpt-4o"
+            }
+        
+        # Select API based on user preference
+        self.selected_api = self._select_api()
+        
+        if not self.selected_api:
             raise ValueError(
-                "No OpenAI API key found. Please set the OPENAI_API_KEY environment variable."
+                "No API configuration found. Please set either DEEPSEEK_API_KEY or OPENAI_API_KEY environment variable."
             )
-
-        # Initialize OpenAI client
-        self.client = OpenAI(api_key=self.api_key)
+        
+        # Initialize OpenAI client with selected API configuration
+        self.client = OpenAI(
+            api_key=self.selected_api["api_key"], 
+            base_url=self.selected_api["base_url"]
+        )
+        
+        print(f"✅ 使用 {self.selected_api['type']} API")
 
         # Initialize conversation histories
         self.conversations = {}
@@ -49,16 +87,73 @@ class InjectiveChatAgent:
             "./injective_functions/utils/utils_schema.json",
         ]
         self.function_schemas = FunctionSchemaLoader.load_schemas(schema_paths)
+    
+    def _select_api(self):
+        """Select API based on user preference"""
+        # If user specified a specific model
+        if self.selected_model in self.api_configs:
+            self.api_configs[self.selected_model]["type"] = self.selected_model
+            return self.api_configs[self.selected_model]
+        
+        # If auto mode, show available options and let user choose
+        if self.selected_model == "auto":
+            print("🤖 检测到多个可用的API配置:")
+            available_apis = list(self.api_configs.keys())
+            
+            if len(available_apis) == 1:
+                # Only one API available, use it
+                api_type = available_apis[0]
+                self.api_configs[api_type]["type"] = api_type
+                return self.api_configs[api_type]
+            elif len(available_apis) > 1:
+                print("📋 可用的API类型:")
+                for i, api_type in enumerate(available_apis, 1):
+                    print(f"   {i}. {api_type.upper()}")
+                
+                print(f"\n💡 请设置 SELECTED_MODEL 环境变量来选择API:")
+                print(f"   例如: SELECTED_MODEL=deepseek")
+                print(f"   或者: SELECTED_MODEL=openai")
+                print(f"   或者: SELECTED_MODEL=chatanywhere")
+                
+                # Use the first available API as default
+                api_type = available_apis[0]
+                print(f"⚠️  使用默认API: {api_type}")
+                self.api_configs[api_type]["type"] = api_type
+                return self.api_configs[api_type]
+        
+        # If specified model is not available
+        if self.selected_model != "auto":
+            available_apis = list(self.api_configs.keys())
+            print(f"❌ 指定的模型 '{self.selected_model}' 不可用")
+            print(f"📋 可用的API类型: {', '.join(available_apis)}")
+            print(f"💡 请设置正确的 SELECTED_MODEL 环境变量")
+            
+            if available_apis:
+                # Use the first available API as fallback
+                api_type = available_apis[0]
+                print(f"⚠️  使用备用API: {api_type}")
+                self.api_configs[api_type]["type"] = api_type
+                return self.api_configs[api_type]
+        
+        return None
 
     async def initialize_agent(
         self, agent_id: str, private_key: str, environment: str = "testnet"
     ) -> None:
         """Initialize Injective clients if they don't exist"""
         if agent_id not in self.agents:
-            clients = await InjectiveClientFactory.create_all(
-                private_key=private_key, network_type=environment
-            )
-            self.agents[agent_id] = clients
+            # Skip initialization if private_key is invalid or default
+            if private_key and private_key != "default" and len(private_key) >= 64:
+                try:
+                    clients = await InjectiveClientFactory.create_all(
+                        private_key=private_key, network_type=environment
+                    )
+                    self.agents[agent_id] = clients
+                except Exception as e:
+                    print(f"Failed to initialize agent with private key: {str(e)}")
+                    # Continue without Injective clients for general chat
+            else:
+                print(f"Skipping Injective client initialization for agent {agent_id} - no valid private key provided")
 
     async def execute_function(
         self, function_name: str, arguments: dict, agent_id: str
@@ -69,7 +164,9 @@ class InjectiveChatAgent:
             clients = self.agents.get(agent_id)
             if not clients:
                 return {
-                    "error": "Agent not initialized. Please provide valid credentials."
+                    "error": "Injective functions require valid credentials. Please provide a valid private key to use blockchain functions.",
+                    "success": False,
+                    "details": {"function": function_name, "arguments": arguments},
                 }
 
             return await FunctionExecutor.execute_function(
@@ -91,7 +188,7 @@ class InjectiveChatAgent:
         agent_id=None,
         environment="testnet",
     ):
-        """Get response from OpenAI API."""
+        """Get response from API."""
         await self.initialize_agent(
             agent_id=agent_id, private_key=private_key, environment=environment
         )
@@ -104,38 +201,17 @@ class InjectiveChatAgent:
             # Add user message to conversation history
             self.conversations[session_id].append({"role": "user", "content": message})
 
-            # Get response from OpenAI
+            # Use the selected API's model
+            model = self.selected_api["model"]
+
+            # Get response from API
             response = await asyncio.to_thread(
                 self.client.chat.completions.create,
-                model="gpt-4o",
+                model=model,
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are a helpful AI assistant on Injective Chain. 
-                    You will be answering all things related to injective chain, and help out with
-                    on-chain functions.
-                    
-                    When handling market IDs, always use these standardized formats:
-                    - For BTC perpetual: "BTC/USDT PERP" maps to "btcusdt-perp"
-                    - For ETH perpetual: "ETH/USDT PERP" maps to "ethusdt-perp"
-                    
-                    When users mention markets:
-                    1. If they use casual terms like "Bitcoin perpetual" or "BTC perp", interpret it as "BTC/USDT PERP"
-                    2. If they mention "Ethereum futures" or "ETH perpetual", interpret it as "ETH/USDT PERP"
-                    3. Always use the standardized format in your responses
-                    
-                    Before performing any action:
-                    1. Describe what you're about to do
-                    2. Ask for explicit confirmation
-                    3. Only proceed after receiving a "yes"
-                    
-                    When making function calls:
-                    1. Convert the standardized format (e.g., "BTC/USDT PERP") to the internal format (e.g., "btcusdt-perp")
-                    2. When displaying results to users, convert back to the standard format
-                    3. Always confirm before executing any functions
-                    
-                    For general questions, provide informative responses.
-                    When users want to perform actions, describe the action and ask for confirmation but for fetching data you dont have to ask for confirmation.""",
+                        "content": "You are an AI assistant for Injective Chain. Help with blockchain questions and functions. Use 'BTC/USDT PERP' for Bitcoin perpetual and 'ETH/USDT PERP' for Ethereum perpetual. Confirm before executing actions.",
                     }
                 ]
                 + self.conversations[session_id],
@@ -180,10 +256,12 @@ class InjectiveChatAgent:
                     }
                 )
 
-                # Get final response
+                # Get final response with appropriate model
+                final_model = self.selected_api["model"]
+
                 second_response = await asyncio.to_thread(
                     self.client.chat.completions.create,
-                    model="gpt-4-turbo-preview",
+                    model=final_model,
                     messages=self.conversations[session_id],
                     max_tokens=2000,
                     temperature=0.7,
@@ -249,6 +327,23 @@ class InjectiveChatAgent:
 agent = InjectiveChatAgent()
 
 
+@app.route("/", methods=["GET"])
+async def root():
+    """Root endpoint with API information"""
+    return jsonify({
+        "message": "Welcome to Injective Agent API",
+        "version": "1.0.0",
+        "endpoints": {
+            "GET /": "This endpoint - API information",
+            "GET /ping": "Health check",
+            "POST /chat": "Chat with the agent",
+            "GET /history": "Get chat history",
+            "POST /clear": "Clear chat history"
+        },
+        "status": "running"
+    })
+
+
 @app.route("/ping", methods=["GET"])
 async def ping():
     """Health check endpoint"""
@@ -260,9 +355,27 @@ async def ping():
 @app.route("/chat", methods=["POST"])
 async def chat_endpoint():
     """Main chat endpoint"""
-    data = await request.get_json()
     try:
-        if not data or "message" not in data:
+        data = await request.get_json()
+        
+        # 检查请求数据是否为空
+        if not data:
+            return (
+                jsonify(
+                    {
+                        "error": "No data provided",
+                        "response": "Please provide a valid JSON request with a message.",
+                        "session_id": "default",
+                        "agent_id": "default",
+                        "agent_key": "default",
+                        "environment": "testnet",
+                    }
+                ),
+                400,
+            )
+        
+        # 检查消息字段
+        if "message" not in data or not data["message"] or data["message"].strip() == "":
             return (
                 jsonify(
                     {
@@ -281,18 +394,34 @@ async def chat_endpoint():
         private_key = data.get("agent_key", "default")
         agent_id = data.get("agent_id", "default")
         environment = data.get("environment", "testnet")
+        
+        # 验证环境参数
+        if environment not in ["testnet", "mainnet"]:
+            environment = "testnet"
+        
         response = await agent.get_response(
             data["message"], session_id, private_key, agent_id, environment
         )
 
         return jsonify(response)
+    except json.JSONDecodeError:
+        return (
+            jsonify(
+                {
+                    "error": "Invalid JSON format",
+                    "response": "Please provide a valid JSON request.",
+                    "session_id": "default",
+                }
+            ),
+            400,
+        )
     except Exception as e:
         return (
             jsonify(
                 {
                     "error": str(e),
                     "response": "I apologize, but I encountered an error. Please try again.",
-                    "session_id": data.get("session_id", "default"),
+                    "session_id": data.get("session_id", "default") if 'data' in locals() else "default",
                 }
             ),
             500,
