@@ -42,6 +42,203 @@ class InjectiveCLI:
         # 会话管理
         self.session_start_time = datetime.now()
         self.command_history = []
+        
+        # 智能命令识别系统
+        self._init_smart_command_system()
+    
+    def _init_smart_command_system(self):
+        """初始化智能命令识别系统"""
+        # 保留基本的命令分类，但主要用于简单命令
+        self.simple_commands = {
+            "help", "ping", "clear", "quit", "session",
+            "switch_network", "create_agent", "delete_agent", 
+            "switch_agent", "list_agents", "shutdown_server"
+        }
+        
+        # 保留复合命令前缀，用于向后兼容
+        self.composite_prefixes = {
+            "check", "get", "show", "display", "query"
+        }
+        
+        # 添加直接支持的命令（无需复合格式）
+        self.direct_commands = {
+            "transfer", "send", "tx", "balance", "balances", "bal",
+            "orders", "markets", "positions", "history"
+        }
+        
+        # 添加查询命令（用于复合命令格式）
+        self.query_commands = {
+            "balance", "balances", "bal", "orders", "markets", 
+            "positions", "history", "transfer"
+        }
+        
+        # 添加操作命令（用于复合命令格式）
+        self.action_commands = {
+            "transfer", "send", "tx", "create", "cancel", "update"
+        }
+    
+    def _smart_command_router(self, command: str, args: str) -> bool:
+        """
+        智能命令路由器
+        
+        将复杂命令识别交给AI模型处理，只处理简单命令
+        """
+        # 1. 处理代理相关命令（这些是系统级别的命令）
+        if command.lower() in self.simple_commands:
+            if self.handle_agent_commands(command, args):
+                return True
+        
+        # 2. 处理直接命令（如 transfer, balance 等）
+        if command.lower() in self.direct_commands:
+            if self._handle_direct_command(command, args):
+                return True
+        
+        # 3. 处理复合命令（向后兼容，如 check balance, get balance 等）
+        if command.lower() in self.composite_prefixes and args:
+            if self._handle_composite_command(command, args):
+                return True
+        
+        # 4. 复杂命令交给AI处理
+        return False
+    
+    def _handle_ai_command(self, user_input: str) -> bool:
+        """
+        通过AI模型处理复杂命令
+        
+        包括：
+        - 自然语言命令解析
+        - 命令意图识别
+        - 参数提取和验证
+        - 智能路由
+        """
+        current_agent = self.agent_manager.get_current_agent()
+        if not current_agent:
+            print(f"{Fore.RED}❌ 请先选择代理{Style.RESET_ALL}")
+            print(f"   使用 'switch_agent' 命令选择代理")
+            return True
+        
+        print(f"{Fore.CYAN}🤖 正在通过AI代理分析您的命令...{Style.RESET_ALL}")
+        
+        # 构建智能AI请求
+        ai_prompt = f"""
+请智能分析以下用户命令，并执行相应的操作：
+
+用户输入: {user_input}
+
+请执行以下步骤：
+1. 识别命令意图（查询余额、转账、查询订单等）
+2. 提取和验证相关参数
+3. 调用相应的函数执行操作
+4. 返回清晰、友好的结果
+
+特别注意：
+- 如果是转账命令，请确保参数完整并显示确认信息
+- 如果是查询命令，请格式化显示结果
+- 如果命令不明确，请询问用户澄清
+- 如果出现错误，请提供有用的错误信息和解决建议
+
+请开始智能处理...
+"""
+        
+        try:
+            # 发送到AI代理
+            request_data = {
+                "message": ai_prompt,
+                "session_id": self.session_id,
+                "agent_id": current_agent.get('address'),
+                "agent_key": current_agent.get('private_key'),
+                "environment": self.agent_manager.get_current_network(),
+            }
+            
+            # 启动动画
+            self.start_animation()
+            
+            # 发送请求
+            response = self.make_request("/chat", request_data)
+            
+            # 停止动画
+            self.stop_animation()
+            
+            # 显示结果
+            if response and "response" in response:
+                print(f"\n{Fore.GREEN}✅ AI智能处理结果:{Style.RESET_ALL}")
+                self.display_response(response.get("response"), response if self.debug else None)
+                
+                # 显示函数调用信息
+                if "function_call" in response and response["function_call"] and not self.debug:
+                    fc = response["function_call"]
+                    fname = fc.get("name", "unknown")
+                    fresult = fc.get("result", {})
+                    status = fresult.get("success") if isinstance(fresult, dict) else None
+                    print(f"   函数调用: {fname} -> {'成功' if status else '处理中'}")
+                    if isinstance(fresult, dict) and not status and fresult.get("error"):
+                        print(f"   错误: {fresult.get('error')}")
+            else:
+                print(f"{Fore.RED}❌ AI处理失败: 服务器无响应{Style.RESET_ALL}")
+            
+            return True
+            
+        except Exception as e:
+            self.stop_animation()
+            print(f"{Fore.RED}❌ AI处理失败: {str(e)}{Style.RESET_ALL}")
+            return True
+    
+    def _provide_command_suggestions(self, command: str):
+        """提供命令建议和帮助信息"""
+        command_lower = command.lower()
+        
+        # 检查是否为已知命令的变体
+        suggestions = []
+        
+        # 如果命令已经在 direct_commands 中，提供直接使用建议
+        if command_lower in self.direct_commands:
+            if command_lower in ["transfer", "send", "tx"]:
+                suggestions.append(f"{command_lower} 金额 代币 to 地址")
+                suggestions.append(f"{command_lower} (交互模式)")
+            elif command_lower in ["balance", "balances", "bal"]:
+                suggestions.append(f"{command_lower}")
+                suggestions.append(f"check {command_lower}")
+            else:
+                suggestions.append(f"{command_lower}")
+                suggestions.append(f"check {command_lower}")
+        
+        # 检查查询命令（避免重复）
+        for query_cmd in self.query_commands:
+            if (query_cmd.startswith(command_lower) or command_lower in query_cmd) and query_cmd != command_lower:
+                suggestions.append(f"check {query_cmd}")
+                suggestions.append(f"get {query_cmd}")
+        
+        # 检查操作命令（避免重复）
+        for action_cmd in self.action_commands:
+            if (action_cmd.startswith(command_lower) or command_lower in action_cmd) and action_cmd != command_lower:
+                suggestions.append(f"get {action_cmd}")
+        
+        # 检查复合命令前缀
+        for prefix in self.composite_prefixes:
+            if prefix.startswith(command_lower) or command_lower in prefix:
+                suggestions.extend([f"{prefix} balance", f"{prefix} orders", f"{prefix} transfer"])
+        
+        # 去重并限制建议数量
+        unique_suggestions = list(dict.fromkeys(suggestions))  # 保持顺序的去重
+        
+        if unique_suggestions:
+            print(f"{Fore.YELLOW}💡 您可能想要输入:{Style.RESET_ALL}")
+            for suggestion in unique_suggestions[:5]:  # 最多显示5个建议
+                print(f"   {suggestion}")
+        else:
+            print(f"{Fore.YELLOW}💡 输入 'help' 查看所有可用命令{Style.RESET_ALL}")
+    
+    def _handle_unknown_command(self, command: str, args: str) -> bool:
+        """处理未知命令，提供友好的错误信息和建议"""
+        print(f"{Fore.RED}❓ 未知命令: '{command}'{Style.RESET_ALL}")
+        
+        if args:
+            print(f"{Fore.RED}❓ 未知的{command}命令: '{args}'{Style.RESET_ALL}")
+        
+        # 提供命令建议
+        self._provide_command_suggestions(command)
+        
+        return True
 
     def clear_screen(self):
         """Clear the terminal screen."""
@@ -237,7 +434,8 @@ class InjectiveCLI:
         print("General: quit, clear, help, history, ping, debug, session")
         print("Network: switch_network [mainnet|testnet]")
         print("Agents: create_agent, delete_agent, switch_agent, list_agents")
-        print("Blockchain: check balance, get orders, show markets, view positions")
+        print("Blockchain: check balance, get orders, show markets, view positions, transfer")
+        print("Direct Commands: transfer, balance, orders, markets, positions, history")
         print("Server: shutdown_server [token]")
         print("=" * 80 + Style.RESET_ALL)
 
@@ -489,7 +687,7 @@ class InjectiveCLI:
         """处理复合命令（如 check balance, get balance 等）"""
         if not args:
             print(f"{Fore.YELLOW}💡 请指定要{command}的内容{Style.RESET_ALL}")
-            print(f"   例如: {command} balance, {command} orders, {command} markets")
+            print(f"   例如: {command} balance, {command} orders, {command} markets, {command} transfer")
             return True
         
         # 解析子命令
@@ -505,10 +703,35 @@ class InjectiveCLI:
             return self._handle_positions_command(command)
         elif sub_command in ["history", "hist", "transactions"]:
             return self._handle_history_command(command)
+        elif sub_command in ["transfer", "send", "tx"]:
+            return self._handle_transfer_command(command)
         else:
             print(f"{Fore.YELLOW}❓ 未知的{command}命令: '{sub_command}'{Style.RESET_ALL}")
-            print(f"{Fore.CYAN}💡 支持的{command}命令: balance, orders, markets, positions, history{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}💡 支持的{command}命令: balance, orders, markets, positions, history, transfer{Style.RESET_ALL}")
             return True
+    
+    def _handle_direct_command(self, command: str, args: str) -> bool:
+        """处理直接命令（如 transfer, balance 等，无需复合格式）"""
+        command_lower = command.lower()
+        
+        if command_lower in ["transfer", "send", "tx"]:
+            # 如果已经有参数，直接处理；否则进入交互模式
+            if args:
+                return self._handle_transfer_with_args(args)
+            else:
+                return self._handle_transfer_command(command)
+        elif command_lower in ["balance", "balances", "bal"]:
+            return self._handle_balance_command(command)
+        elif command_lower in ["order", "orders", "orderbook"]:
+            return self._handle_orders_command(command)
+        elif command_lower in ["market", "markets", "ticker"]:
+            return self._handle_markets_command(command)
+        elif command_lower in ["position", "positions", "pos"]:
+            return self._handle_positions_command(command)
+        elif command_lower in ["history", "hist", "transactions"]:
+            return self._handle_history_command(command)
+        else:
+            return False
     
     def _handle_balance_command(self, command: str) -> bool:
         """处理余额查询命令"""
@@ -709,6 +932,264 @@ class InjectiveCLI:
         
         return True
 
+    def _handle_transfer_with_args(self, args: str) -> bool:
+        """处理带参数的转账命令（如 transfer 0.0066 INJ to inj1m9wzsyx0ksaauj0a59gmzlnnyzyakawh3aa5xw）"""
+        current_agent = self.agent_manager.get_current_agent()
+        if not current_agent:
+            print(f"{Fore.RED}❌ 请先选择代理{Style.RESET_ALL}")
+            print(f"   使用 'switch_agent' 命令选择代理")
+            return True
+        
+        print(f"{Fore.CYAN}💰 发起转账...{Style.RESET_ALL}")
+        print(f"   代理地址: {current_agent.get('address', 'unknown')}")
+        print(f"   网络: {self._format_network_details()}")
+        
+        try:
+            # 直接解析转账参数
+            amount, denom, receiver_address = self._parse_transfer_input(args)
+            if not all([amount, denom, receiver_address]):
+                print(f"{Fore.RED}❌ 无法解析转账信息，请使用正确格式{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}💡 支持的格式:{Style.RESET_ALL}")
+                print(f"   • 金额 代币 to 地址")
+                print(f"   • transfer 金额 代币 to 地址")
+                print(f"   • 完整命令: transfer 0.066 INJ to inj1m9wzsyx0ksaauj0a59gmzlnnyzyakawh3aa5xw")
+                return True
+            
+            print(f"{Fore.GREEN}📋 转账信息确认:{Style.RESET_ALL}")
+            print(f"   接收地址: {receiver_address}")
+            print(f"   转账金额: {amount} {denom}")
+            print(f"   发送地址: {current_agent.get('address', 'unknown')}")
+            
+            # 确认转账
+            print(f"{Fore.YELLOW}确认执行转账? (y/N):{Style.RESET_ALL}")
+            confirm = input().strip().lower()
+            if confirm not in ['y', 'yes']:
+                print(f"{Fore.YELLOW}转账已取消{Style.RESET_ALL}")
+                return True
+            
+            # 按照 bank_schema.json 构建参数
+            from decimal import Decimal
+            amount_decimal = Decimal(str(amount))
+            
+            # 构建符合 schema 的请求数据
+            transfer_params = {
+                "to_address": receiver_address,
+                "amount": str(amount_decimal),  # 按照 schema 要求，使用字符串格式
+                "denom": denom
+            }
+            
+            print(f"{Fore.CYAN}📋 转账参数 (符合 bank_schema.json):{Style.RESET_ALL}")
+            for key, value in transfer_params.items():
+                print(f"   {key}: {value}")
+            
+            # 构建请求数据 - 使用结构化参数而不是自然语言
+            request_data = {
+                "message": "transfer_funds",  # 直接指定函数名
+                "session_id": self.session_id,
+                "agent_id": current_agent.get('address'),
+                "agent_key": current_agent.get('private_key'),
+                "environment": self.agent_manager.get_current_network(),
+                "function_name": "transfer_funds",  # 明确指定函数
+                "function_args": transfer_params  # 传递结构化参数
+            }
+            
+            # 发送请求到服务器
+            print(f"{Fore.CYAN}🚀 正在执行转账...{Style.RESET_ALL}")
+            response = self.make_request("/chat", request_data)
+            
+            if response and "response" in response:
+                print(f"\n{Fore.GREEN}✅ 转账结果:{Style.RESET_ALL}")
+                self.display_response(response.get("response"), response if self.debug else None)
+                if "function_call" in response and response["function_call"] and not self.debug:
+                    fc = response["function_call"]
+                    fname = fc.get("name", "unknown")
+                    fresult = fc.get("result", {})
+                    status = fresult.get("success") if isinstance(fresult, dict) else None
+                    print(f"   函数调用: {fname} -> {'成功' if status else '处理中'}")
+                    if isinstance(fresult, dict) and not status and fresult.get("error"):
+                        print(f"   错误: {fresult.get('error')}")
+            else:
+                print(f"{Fore.RED}❌ 转账失败: 服务器无响应{Style.RESET_ALL}")
+                
+        except Exception as e:
+            print(f"{Fore.RED}❌ 转账失败: {str(e)}{Style.RESET_ALL}")
+            print(f"   请确保服务器正在运行并且代理配置正确")
+        
+        return True
+
+    def _handle_transfer_command(self, command: str) -> bool:
+        """处理转账命令（交互模式）"""
+        current_agent = self.agent_manager.get_current_agent()
+        if not current_agent:
+            print(f"{Fore.RED}❌ 请先选择代理{Style.RESET_ALL}")
+            print(f"   使用 'switch_agent' 命令选择代理")
+            return True
+        
+        print(f"{Fore.CYAN}💰 发起转账...{Style.RESET_ALL}")
+        print(f"   代理地址: {current_agent.get('address', 'unknown')}")
+        print(f"   网络: {self._format_network_details()}")
+        
+        try:
+            # 获取转账参数
+            print(f"{Fore.YELLOW}请输入转账信息 (格式: 金额 代币 to 地址 或直接输入完整命令){Style.RESET_ALL}")
+            print(f"{Fore.CYAN}示例: 0.066 INJ to inj1m9wzsyx0ksaauj0a59gmzlnnyzyakawh3aa5xw{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}或者: transfer 0.066 INJ to inj1m9wzsyx0ksaauj0a59gmzlnnyzyakawh3aa5xw{Style.RESET_ALL}")
+            
+            transfer_input = input().strip()
+            if not transfer_input:
+                print(f"{Fore.RED}❌ 转账信息不能为空{Style.RESET_ALL}")
+                return True
+            
+            # 尝试解析转账信息
+            amount, denom, receiver_address = self._parse_transfer_input(transfer_input)
+            if not all([amount, denom, receiver_address]):
+                print(f"{Fore.RED}❌ 无法解析转账信息，请使用正确格式{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}💡 支持的格式:{Style.RESET_ALL}")
+                print(f"   • 金额 代币 to 地址")
+                print(f"   • transfer 金额 代币 to 地址")
+                print(f"   • 完整命令: transfer 0.066 INJ to inj1m9wzsyx0ksaauj0a59gmzlnnyzyakawh3aa5xw")
+                return True
+            
+            print(f"{Fore.GREEN}📋 转账信息确认:{Style.RESET_ALL}")
+            print(f"   接收地址: {receiver_address}")
+            print(f"   转账金额: {amount} {denom}")
+            print(f"   发送地址: {current_agent.get('address', 'unknown')}")
+            
+            # 确认转账
+            print(f"{Fore.YELLOW}确认执行转账? (y/N):{Style.RESET_ALL}")
+            confirm = input().strip().lower()
+            if confirm not in ['y', 'yes']:
+                print(f"{Fore.YELLOW}转账已取消{Style.RESET_ALL}")
+                return True
+            
+            # 按照 bank_schema.json 构建参数
+            # 注意：amount 需要转换为 Decimal 字符串以保持精度
+            from decimal import Decimal
+            amount_decimal = Decimal(str(amount))
+            
+            # 构建符合 schema 的请求数据
+            transfer_params = {
+                "to_address": receiver_address,
+                "amount": str(amount_decimal),  # 按照 schema 要求，使用字符串格式
+                "denom": denom
+            }
+            
+            print(f"{Fore.CYAN}📋 转账参数 (符合 bank_schema.json):{Style.RESET_ALL}")
+            for key, value in transfer_params.items():
+                print(f"   {key}: {value}")
+            
+            # 构建请求数据 - 使用结构化参数而不是自然语言
+            request_data = {
+                "message": "transfer_funds",  # 直接指定函数名
+                "session_id": self.session_id,
+                "agent_id": current_agent.get('address'),
+                "agent_key": current_agent.get('private_key'),
+                "environment": self.agent_manager.get_current_network(),
+                "function_name": "transfer_funds",  # 明确指定函数
+                "function_args": transfer_params  # 传递结构化参数
+            }
+            
+            # 发送请求到服务器
+            print(f"{Fore.CYAN}🚀 正在执行转账...{Style.RESET_ALL}")
+            response = self.make_request("/chat", request_data)
+            
+            if response and "response" in response:
+                print(f"\n{Fore.GREEN}✅ 转账结果:{Style.RESET_ALL}")
+                self.display_response(response.get("response"), response if self.debug else None)
+                if "function_call" in response and response["function_call"] and not self.debug:
+                    fc = response["function_call"]
+                    fname = fc.get("name", "unknown")
+                    fresult = fc.get("result", {})
+                    status = fresult.get("success") if isinstance(fresult, dict) else None
+                    print(f"   函数调用: {fname} -> {'成功' if status else '处理中'}")
+                    if isinstance(fresult, dict) and not status and fresult.get("error"):
+                        print(f"   错误: {fresult.get('error')}")
+            else:
+                print(f"{Fore.RED}❌ 转账失败: 服务器无响应{Style.RESET_ALL}")
+                
+        except Exception as e:
+            print(f"{Fore.RED}❌ 转账失败: {str(e)}{Style.RESET_ALL}")
+        
+        return True
+    
+    def _parse_transfer_input(self, transfer_input: str) -> tuple:
+        """解析转账输入，返回 (amount, denom, receiver_address)"""
+        try:
+            # 移除多余的空格
+            input_clean = ' '.join(transfer_input.split())
+            
+            # 尝试解析 "金额 代币 to 地址" 格式
+            if ' to ' in input_clean:
+                parts = input_clean.split(' to ')
+                if len(parts) == 2:
+                    left_part = parts[0].strip()
+                    receiver_address = parts[1].strip()
+                    
+                    # 解析左侧部分：金额 代币
+                    left_parts = left_part.split()
+                    if len(left_parts) >= 2:
+                        # 尝试解析金额（可能是第一个或最后一个数字）
+                        amount = None
+                        denom = None
+                        
+                        # 检查第一个部分是否为数字
+                        try:
+                            amount = float(left_parts[0])
+                            denom = left_parts[1]
+                        except ValueError:
+                            # 如果第一个不是数字，尝试最后一个
+                            try:
+                                amount = float(left_parts[-2])
+                                denom = left_parts[-1]
+                            except (ValueError, IndexError):
+                                pass
+                        
+                        if amount is not None and denom:
+                            return amount, denom, receiver_address
+            
+            # 尝试解析 "transfer 金额 代币 to 地址" 格式
+            if input_clean.lower().startswith('transfer '):
+                # 移除 "transfer " 前缀
+                content = input_clean[9:].strip()
+                if ' to ' in content:
+                    parts = content.split(' to ')
+                    if len(parts) == 2:
+                        left_part = parts[0].strip()
+                        receiver_address = parts[1].strip()
+                        
+                        left_parts = left_part.split()
+                        if len(left_parts) >= 2:
+                            try:
+                                amount = float(left_parts[0])
+                                denom = left_parts[1]
+                                return amount, denom, receiver_address
+                            except ValueError:
+                                pass
+            
+            # 尝试解析 "send 金额 代币 to 地址" 格式
+            if input_clean.lower().startswith('send '):
+                content = input_clean[5:].strip()
+                if ' to ' in content:
+                    parts = content.split(' to ')
+                    if len(parts) == 2:
+                        left_part = parts[0].strip()
+                        receiver_address = parts[1].strip()
+                        
+                        left_parts = left_part.split()
+                        if len(left_parts) >= 2:
+                            try:
+                                amount = float(left_parts[0])
+                                denom = left_parts[1]
+                                return amount, denom, receiver_address
+                            except ValueError:
+                                pass
+            
+            # 如果无法解析，返回 None
+            return None, None, None
+            
+        except Exception:
+            return None, None, None
+
     def make_request(
         self, endpoint: str, data: Optional[dict] = None, params: Optional[dict] = None
     ) -> dict:
@@ -763,41 +1244,13 @@ class InjectiveCLI:
                 # Add command to history
                 self._add_to_history(user_input)
 
-                # Handle agent-specific commands
-                if self.handle_agent_commands(command, args):
+                # 智能命令识别和路由
+                if self._smart_command_router(command, args):
                     continue
 
-                if not self.agent_manager.get_current_agent():
-                    print(
-                        f"{Fore.RED}Error: No agent selected. Use 'switch_agent' to select an agent.{Style.RESET_ALL}"
-                    )
+                # 复杂命令通过AI处理
+                if self._handle_ai_command(user_input):
                     continue
-
-                # Start animation before making the request
-                self.start_animation()
-
-                try:
-                    agent = self.agent_manager.get_current_agent()
-                    result = self.make_request(
-                        "/chat",
-                        {
-                            "message": user_input,
-                            "session_id": self.session_id,
-                            "agent_id": agent["address"],
-                            "agent_key": agent["private_key"],
-                            "environment": self.agent_manager.get_current_network(),
-                        },
-                    )
-
-                    # Stop animation before displaying response
-                    self.stop_animation()
-                    self.display_response(
-                        result.get("response"), result if self.debug else None
-                    )
-
-                except Exception as e:
-                    self.stop_animation()
-                    print(f"{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
 
             except KeyboardInterrupt:
                 self.stop_animation()

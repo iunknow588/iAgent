@@ -593,9 +593,32 @@ async def chat_endpoint():
         if environment not in ["testnet", "mainnet"]:
             environment = "testnet"
         
-        response = await agent.get_response(
-            data["message"], session_id, private_key, agent_id, environment
-        )
+        # 检查是否为直接函数调用
+        if "function_name" in data and "function_args" in data:
+            # 直接函数调用模式
+            function_name = data["function_name"]
+            function_args = data["function_args"]
+            
+            # 初始化代理
+            await agent.initialize_agent(agent_id, private_key, environment)
+            
+            # 直接执行函数
+            function_response = await agent.execute_function(function_name, function_args, agent_id)
+            
+            # 构建响应
+            response = {
+                "response": f"Function {function_name} executed successfully",
+                "function_call": {
+                    "name": function_name,
+                    "result": function_response,
+                },
+                "session_id": session_id,
+            }
+        else:
+            # 常规聊天模式
+            response = await agent.get_response(
+                data["message"], session_id, private_key, agent_id, environment
+            )
 
         return jsonify(response)
     except json.JSONDecodeError:
