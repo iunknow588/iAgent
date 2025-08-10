@@ -1,0 +1,23 @@
+# 🔐 代理配置文件模板
+# ⚠️  重要：请将此文件重命名为 agents_config.yaml 并填入您的真实信息
+# 🚨  警告：永远不要将包含真实私钥的文件提交到版本控制系统
+
+# 代理配置示例
+li:
+  address: <YOUR_WALLET_ADDRESS_HERE>
+  created_at: '<CURRENT_TIMESTAMP>'
+  network: testnet  # 或 mainnet
+  private_key: <YOUR_WALLET_PRIVATE_KEY_HERE>
+
+# 添加更多代理配置
+# agent2:
+#   address: <YOUR_SECOND_WALLET_ADDRESS>
+#   created_at: '<CURRENT_TIMESTAMP>'
+#   network: testnet
+#   private_key: <YOUR_SECOND_WALLET_PRIVATE_KEY>
+
+# 安全提示：
+# 1. 私钥是64位十六进制字符串
+# 2. 地址以 inj1 开头
+# 3. 请确保网络类型正确（testnet/mainnet）
+# 4. 建议使用环境变量来管理私钥

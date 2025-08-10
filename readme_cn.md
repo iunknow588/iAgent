@@ -1,6 +1,18 @@
 ![Banner!](assets/logo.png)
 # Injective Agent 中文文档
 
+## 🚨 **重要安全警告**
+
+**⚠️ 安全第一！永远不要将包含真实私钥的文件提交到版本控制系统！**
+
+**🔐 私钥安全须知：**
+- 私钥是访问您钱包的唯一凭证
+- 私钥泄露可能导致资产丢失
+- 请使用环境变量或安全的密钥管理系统
+- 详细安全指南请查看 [SECURITY_GUIDE.md](SECURITY_GUIDE.md)
+
+---
+
 欢迎使用基于 OpenAI 的 Injective Chain 智能交易代理。该项目提供了一套完整的自动化工具集，包括智能代理服务器、多代理管理系统、区块链交互模块和完整的测试监控工具，旨在通过自然语言交互为您提供专业的数据驱动交易体验。
 
 ## 系统概述
@@ -92,8 +104,8 @@ requests>=2.31.0    # HTTP请求库
    # 创建 .env 文件
    echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
    echo "NETWORK=testnet" >> .env
-   echo "INJECTIVE_API_URL=https://testnet.sentry.lcd.injective.network" >> .env
-   echo "INJECTIVE_MAINNET_API_URL=https://sentry.lcd.injective.network" >> .env
+   echo "INJECTIVE_API_URL=https://testnet.lcd.injective.network" >> .env
+   echo "INJECTIVE_MAINNET_API_URL=https://lcd.injective.network" >> .env
    echo "OPENAI_API_BASE_URL=https://api.chatanywhere.tech" >> .env
    ```
 
@@ -332,15 +344,15 @@ OPENAI_API_BASE_URL=https://api.chatanywhere.tech
 
 # Injective 网络配置
 NETWORK=testnet
-INJECTIVE_API_URL=https://testnet.sentry.lcd.injective.network
-INJECTIVE_MAINNET_API_URL=https://sentry.lcd.injective.network
+INJECTIVE_API_URL=https://testnet.lcd.injective.network
+INJECTIVE_MAINNET_API_URL=https://lcd.injective.network
 ```
 
 ### 网络配置对应关系
 | 网络类型 | NETWORK 值 | API 请求地址 |
 |---------|------------|-------------|
-| 测试网 | `testnet` | `https://testnet.sentry.lcd.injective.network` |
-| 主网 | `mainnet` | `https://sentry.lcd.injective.network` |
+| 测试网 | `testnet` | `https://testnet.lcd.injective.network` |
+| 主网 | `mainnet` | `https://lcd.injective.network` |
 
 ## AI 代理使用指南
 

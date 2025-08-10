@@ -36,6 +36,7 @@ class InjectiveCLI:
         self.debug = debug
         self.session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.animation_stop = False
+        self.animation_thread = None  # 初始化 animation_thread 属性
         self.agent_manager = AgentManager()
         
         # 会话管理
@@ -49,6 +50,9 @@ class InjectiveCLI:
     def start_animation(self):
         """Start the animation in a new thread"""
         self.animation_stop = False
+        # 确保之前的线程已经停止
+        if self.animation_thread and self.animation_thread.is_alive():
+            self.stop_animation()
         self.animation_thread = threading.Thread(target=self.display_typing_animation)
         self.animation_thread.daemon = True
         self.animation_thread.start()
@@ -234,6 +238,7 @@ class InjectiveCLI:
         print("Network: switch_network [mainnet|testnet]")
         print("Agents: create_agent, delete_agent, switch_agent, list_agents")
         print("Blockchain: check balance, get orders, show markets, view positions")
+        print("Server: shutdown_server [token]")
         print("=" * 80 + Style.RESET_ALL)
 
     def handle_agent_commands(self, command: str, args: str) -> bool:
@@ -366,6 +371,47 @@ class InjectiveCLI:
                         print(f"   {i:2d}. {cmd}")
                 else:
                     print(f"   {Fore.YELLOW}暂无命令历史{Style.RESET_ALL}")
+                return True
+
+            elif command == "shutdown_server":
+                try:
+                    url = f"{self.api_url.rstrip('/')}/shutdown"
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    payload = {}
+                    if args:
+                        payload["token"] = args.strip()
+                    print(f"{Fore.YELLOW}Requesting server shutdown...{Style.RESET_ALL}")
+                    resp = requests.post(url, json=payload, headers=headers, timeout=5)
+                    if resp.status_code == 200:
+                        print(f"{Fore.GREEN}✅ Server acknowledged shutdown.{Style.RESET_ALL}")
+                    elif resp.status_code == 403:
+                        print(f"{Fore.RED}❌ Unauthorized. Invalid or missing shutdown token.{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.RED}❌ Shutdown failed: HTTP {resp.status_code} - {resp.text}{Style.RESET_ALL}")
+                except Exception as e:
+                    print(f"{Fore.RED}❌ Shutdown request error: {str(e)}{Style.RESET_ALL}")
+                return True
+
+            elif command == "netcheck":
+                try:
+                    url = f"{self.api_url.rstrip('/')}/network/connectivity"
+                    params = {"environment": self.agent_manager.get_current_network()}
+                    headers = {"Accept": "application/json"}
+                    print(f"{Fore.YELLOW}Checking Injective endpoint connectivity...{Style.RESET_ALL}")
+                    resp = requests.get(url, params=params, headers=headers, timeout=10)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        fresh = data.get("fresh", {})
+                        print(f"{Fore.GREEN}✅ Connectivity results ({data.get('environment','')}){Style.RESET_ALL}")
+                        for name, item in fresh.items():
+                            ok = 'OK' if item.get('reachable') else 'FAIL'
+                            lat = item.get('latency_ms')
+                            target = item.get('target')
+                            print(f"  - {name:14s} {ok:4s}  {lat:>6} ms  {target}")
+                    else:
+                        print(f"{Fore.RED}❌ Netcheck failed: HTTP {resp.status_code} - {resp.text}{Style.RESET_ALL}")
+                except Exception as e:
+                    print(f"{Fore.RED}❌ Netcheck error: {str(e)}{Style.RESET_ALL}")
                 return True
                 
             # 处理复合命令（如 "check balance", "get balance" 等）

@@ -11,9 +11,15 @@ from injective_functions.utils.function_helper import (
 )
 import json
 import asyncio
+import logging
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 import aiohttp
+import asyncio as _asyncio_for_shutdown
+from network.connectivity import check_injective_connectivity, ConnectivityRegistry
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Initialize Quart app (async version of Flask)
 app = Quart(__name__)
@@ -76,17 +82,30 @@ class InjectiveChatAgent:
         self.conversations = {}
         # Initialize injective agents
         self.agents = {}
+        base_dir = os.path.dirname(os.path.abspath(__file__))
         schema_paths = [
-            "./injective_functions/account/account_schema.json",
-            "./injective_functions/auction/auction_schema.json",
-            "./injective_functions/authz/authz_schema.json",
-            "./injective_functions/bank/bank_schema.json",
-            "./injective_functions/exchange/exchange_schema.json",
-            "./injective_functions/staking/staking_schema.json",
-            "./injective_functions/token_factory/token_factory_schema.json",
-            "./injective_functions/utils/utils_schema.json",
+            os.path.join(base_dir, "injective_functions/account/account_schema.json"),
+            os.path.join(base_dir, "injective_functions/auction/auction_schema.json"),
+            os.path.join(base_dir, "injective_functions/authz/authz_schema.json"),
+            os.path.join(base_dir, "injective_functions/bank/bank_schema.json"),
+            os.path.join(base_dir, "injective_functions/exchange/exchange_schema.json"),
+            os.path.join(base_dir, "injective_functions/staking/staking_schema.json"),
+            os.path.join(base_dir, "injective_functions/token_factory/token_factory_schema.json"),
+            os.path.join(base_dir, "injective_functions/utils/utils_schema.json"),
         ]
         self.function_schemas = FunctionSchemaLoader.load_schemas(schema_paths)
+        
+        # Convert schemas for tools format if needed
+        self._tools = []
+        try:
+            fn_list = self.function_schemas.get("functions", []) if isinstance(self.function_schemas, dict) else []
+            self._tools = [
+                {"type": "function", "function": fn}
+                for fn in fn_list
+                if isinstance(fn, dict) and fn.get("name") and fn.get("parameters")
+            ]
+        except Exception:
+            self._tools = []
     
     def _select_api(self):
         """Select API based on user preference"""
@@ -205,10 +224,9 @@ class InjectiveChatAgent:
             model = self.selected_api["model"]
 
             # Get response from API
-            response = await asyncio.to_thread(
-                self.client.chat.completions.create,
-                model=model,
-                messages=[
+            # Build function/tool calling params depending on provider
+            provider_type = self.selected_api["type"]
+            messages = [
                     {
                         "role": "system",
                         "content": """You are an AI assistant for Injective Chain. Help with blockchain questions and functions. 
@@ -233,44 +251,104 @@ Use 'BTC/USDT PERP' for Bitcoin perpetual and 'ETH/USDT PERP' for Ethereum perpe
 
 When users ask for balance information, immediately call query_balances function without asking for additional details unless specifically needed."""
                     }
-                ]
-                + self.conversations[session_id],
-                functions=self.function_schemas,
-                function_call="auto",
-                max_tokens=2000,
-                temperature=0.7,
-            )
+                ] + self.conversations[session_id]
+
+            create_kwargs = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": 2000,
+                "temperature": 0.7,
+            }
+            if provider_type == "deepseek":
+                if self._tools:
+                    create_kwargs.update({"tools": self._tools, "tool_choice": "auto"})
+            else:
+                # default to legacy functions if available
+                fn_list = self.function_schemas.get("functions", []) if isinstance(self.function_schemas, dict) else []
+                if fn_list:
+                    create_kwargs.update({"functions": fn_list, "function_call": "auto"})
+
+            response = await asyncio.to_thread(self.client.chat.completions.create, **create_kwargs)
 
             response_message = response.choices[0].message
             print(response_message)
-            # Handle function calling
+
+            # 如果模型未触发函数调用，但用户请求了余额/相关信息，则执行回退函数调用
+            try:
+                user_intent = str(message).lower().strip()
+                assistant_text = (response_message.content or "").lower() if hasattr(response_message, "content") else ""
+                balance_triggers = [
+                    "check balance",
+                    "get balance",
+                    "show balance",
+                    "view balance",
+                    "balance",
+                ]
+                should_fallback_balance = (
+                    any(t in user_intent for t in balance_triggers)
+                    or ("balance" in user_intent)
+                    or ("query_balances" in assistant_text)
+                    or ("calling function" in assistant_text and "balance" in assistant_text)
+                )
+                    
+                # Also check for subaccount balance requests
+                subaccount_triggers = [
+                    "subaccount",
+                    "deposits", 
+                    "trading balance",
+                    "exchange balance"
+                ]
+                should_fallback_subaccount = any(t in user_intent for t in subaccount_triggers)
+            except Exception:
+                should_fallback_balance = False
+                should_fallback_subaccount = False
+
+            # Handle function calling (native or fallback)
             if (
                 hasattr(response_message, "function_call")
                 and response_message.function_call
-            ):
+            ) or should_fallback_balance or should_fallback_subaccount:
                 # Extract function details
-                function_name = response_message.function_call.name
-                function_args = json.loads(response_message.function_call.arguments)
+                if hasattr(response_message, "function_call") and response_message.function_call:
+                    function_name = response_message.function_call.name
+                    function_args = json.loads(response_message.function_call.arguments)
+                else:
+                    # Fallback based on intent
+                    if should_fallback_subaccount:
+                        function_name = "get_subaccount_deposits"
+                        function_args = {"subaccount_idx": 0}
+                    else:
+                        # Fallback to query_balances when intent indicates a balance request
+                        function_name = "query_balances"
+                        function_args = {}
                 # Execute the function
                 function_response = await self.execute_function(
                     function_name, function_args, agent_id
                 )
 
                 # Add function call and response to conversation
+                tool_call_id = f"call_{function_name}"
                 self.conversations[session_id].append(
                     {
                         "role": "assistant",
                         "content": None,
-                        "function_call": {
-                            "name": function_name,
-                            "arguments": json.dumps(function_args),
-                        },
+                        "tool_calls": [
+                            {
+                                "id": tool_call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": function_name,
+                                    "arguments": json.dumps(function_args),
+                                },
+                            }
+                        ],
                     }
                 )
 
                 self.conversations[session_id].append(
                     {
-                        "role": "function",
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
                         "name": function_name,
                         "content": json.dumps(function_response),
                     }
@@ -279,13 +357,16 @@ When users ask for balance information, immediately call query_balances function
                 # Get final response with appropriate model
                 final_model = self.selected_api["model"]
 
-                second_response = await asyncio.to_thread(
-                    self.client.chat.completions.create,
-                    model=final_model,
-                    messages=self.conversations[session_id],
-                    max_tokens=2000,
-                    temperature=0.7,
-                )
+                second_kwargs = {
+                    "model": final_model,
+                    "messages": self.conversations[session_id],
+                    "max_tokens": 2000,
+                    "temperature": 0.7,
+                }
+                # include tools again if provider uses tools (not strictly required for the second round)
+                if provider_type == "deepseek" and self._tools:
+                    second_kwargs.update({"tools": self._tools, "tool_choice": "none"})
+                second_response = await asyncio.to_thread(self.client.chat.completions.create, **second_kwargs)
 
                 final_response = second_response.choices[0].message.content.strip()
                 self.conversations[session_id].append(
@@ -370,6 +451,99 @@ async def ping():
     return jsonify(
         {"status": "ok", "timestamp": datetime.now().isoformat(), "version": "1.0.0"}
     )
+
+
+@app.route("/network/connectivity", methods=["GET"])
+async def connectivity_endpoint():
+    """Check Injective endpoints connectivity and return cached + fresh results."""
+    try:
+        env = request.args.get("environment", "testnet")
+        registry = ConnectivityRegistry.instance()
+        
+        # 获取缓存结果
+        cached = {k: v.to_dict() for k, v in registry.get_results(env).items()}
+        
+        # 获取缓存信息
+        cache_info = registry.get_cache_info(env)
+        
+        # 检查是否需要重新测试
+        should_recheck = registry.should_recheck(env)
+        
+        # 如果需要重新测试或没有缓存，运行新的检测
+        if should_recheck or not cached:
+            logger.info(f"Running fresh connectivity check for {env}")
+            results = await check_injective_connectivity(env, timeout=5.0)
+            fresh = {k: v.to_dict() for k, v in results.items()}
+        else:
+            logger.info(f"Using cached results for {env}")
+            fresh = cached
+        
+        return jsonify({
+            "environment": env, 
+            "cached": cached, 
+            "fresh": fresh,
+            "cache_info": cache_info,
+            "should_recheck": should_recheck
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/network/status", methods=["GET"])
+async def network_status_endpoint():
+    """Get detailed network status including cache information and endpoint availability."""
+    try:
+        env = request.args.get("environment", "testnet")
+        registry = ConnectivityRegistry.instance()
+        
+        # 获取缓存信息
+        cache_info = registry.get_cache_info(env)
+        
+        # 获取当前最佳端点
+        from network.connectivity import get_best_endpoints
+        best_endpoints = get_best_endpoints(env)
+        
+        # 获取端点状态摘要
+        from network.connectivity import get_endpoint_status_summary
+        status_summary = get_endpoint_status_summary(env)
+        
+        return jsonify({
+            "environment": env,
+            "cache_info": cache_info,
+            "best_endpoints": best_endpoints,
+            "status_summary": status_summary,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/network/refresh", methods=["POST"])
+async def network_refresh_endpoint():
+    """Force refresh network connectivity for specified environment."""
+    try:
+        data = await request.get_json() or {}
+        env = data.get("environment", "testnet")
+        
+        logger.info(f"Force refreshing network connectivity for {env}")
+        
+        # 强制刷新
+        from network.connectivity import refresh_endpoints
+        new_endpoints = refresh_endpoints(env)
+        
+        # 获取新的状态
+        registry = ConnectivityRegistry.instance()
+        cache_info = registry.get_cache_info(env)
+        
+        return jsonify({
+            "environment": env,
+            "refreshed_endpoints": new_endpoints,
+            "cache_info": cache_info,
+            "message": f"Network connectivity refreshed for {env}",
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/chat", methods=["POST"])
@@ -463,12 +637,72 @@ async def clear_endpoint():
     return jsonify({"status": "success"})
 
 
+@app.route("/shutdown", methods=["POST"])
+async def shutdown_endpoint():
+    """Shutdown the API server gracefully.
+
+    Optional auth: set env SERVER_SHUTDOWN_TOKEN and provide {"token": "..."} in the request body.
+    """
+    try:
+        data = await request.get_json() or {}
+        env_token = os.getenv("SERVER_SHUTDOWN_TOKEN")
+        if env_token and data.get("token") != env_token:
+            return jsonify({"error": "Unauthorized"}), 403
+
+        async def _delayed_exit():
+            # Give time for the HTTP response to be sent
+            await _asyncio_for_shutdown.sleep(0.5)
+            os._exit(0)
+
+        _asyncio_for_shutdown.create_task(_delayed_exit())
+        return jsonify({"status": "shutting_down"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run the chatbot API server")
     parser.add_argument("--port", type=int, default=5000, help="Port for API server")
     parser.add_argument("--host", default="0.0.0.0", help="Host for API server")
     parser.add_argument("--debug", action="store_true", help="Run in debug mode")
+    parser.add_argument("--skip-network-check", action="store_true", help="Skip network connectivity check on startup")
     args = parser.parse_args()
+
+    # 启动时进行网络连接性检查
+    if not args.skip_network_check:
+        print("🔍 检查网络连接性...")
+        try:
+            # 检查testnet和mainnet的连接性
+            async def check_networks():
+                results = {}
+                for env in ["testnet", "mainnet"]:
+                    print(f"  检查 {env} 网络端点...")
+                    env_results = await check_injective_connectivity(env, timeout=5.0)
+                    results[env] = env_results
+                    
+                    # 显示结果
+                    reachable_count = sum(1 for status in env_results.values() if status.reachable)
+                    total_count = len(env_results)
+                    print(f"    {env}: {reachable_count}/{total_count} 端点可达")
+                    
+                    for name, status in env_results.items():
+                        status_icon = "✅" if status.reachable else "❌"
+                        latency = f"{status.latency_ms:.1f}ms" if status.latency_ms else "N/A"
+                        print(f"      {status_icon} {name:12s} {latency:>8s}  {status.target}")
+                        if status.error:
+                            print(f"        错误: {status.error}")
+                
+                return results
+            
+            # 运行网络检查
+            network_results = asyncio.run(check_networks())
+            print("✅ 网络连接性检查完成")
+            
+        except Exception as e:
+            print(f"⚠️  网络连接性检查失败: {e}")
+            print("   服务器将继续启动，但某些功能可能受影响")
+    else:
+        print("⚠️  跳过网络连接性检查")
 
     config = Config()
     config.bind = [f"{args.host}:{args.port}"]

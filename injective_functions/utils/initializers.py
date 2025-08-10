@@ -6,6 +6,7 @@ from pyinjective.core.broadcaster import MsgBroadcasterWithPk
 from pyinjective.transaction import Transaction
 from pyinjective.wallet import PrivateKey
 from injective_functions.utils.helpers import detailed_exception_info
+from network.connectivity import get_smart_endpoint
 
 
 class ChainInteractor:
@@ -15,9 +16,8 @@ class ChainInteractor:
         if not self.private_key:
             raise ValueError("No private key found in environment variables")
 
-        self.network = (
-            Network.testnet() if network_type == "testnet" else Network.mainnet()
-        )
+        # 使用全局可达性测试的最佳端点，而不是 pyinjective 默认端点
+        self.network = self._create_custom_network()
         self.client = None
         self.composer = None
         self.message_broadcaster = None
@@ -27,9 +27,44 @@ class ChainInteractor:
         self.pub_key = self.priv_key.to_public_key()
         self.address = self.pub_key.to_address()
 
+    def _create_custom_network(self):
+        """创建使用最佳端点的自定义网络配置"""
+        try:
+            # 获取经过可达性测试验证的最佳端点
+            lcd_endpoint = get_smart_endpoint(self.network_type, "lcd")
+            
+            print(f"🔗 使用最佳端点配置:")
+            print(f"   LCD: {lcd_endpoint}")
+            print(f"   gRPC: 使用pyinjective默认配置")
+            
+            # 策略：使用pyinjective的默认Network配置，但手动替换LCD端点
+            # 这样可以确保所有其他配置都是正确的
+            if self.network_type == "testnet":
+                network = Network.testnet()
+                # 手动替换LCD端点
+                network.lcd_endpoint = lcd_endpoint
+                print(f"   ✅ 已替换LCD端点为: {lcd_endpoint}")
+                return network
+            else:
+                network = Network.mainnet()
+                # 手动替换LCD端点
+                network.lcd_endpoint = lcd_endpoint
+                print(f"   ✅ 已替换LCD端点为: {lcd_endpoint}")
+                return network
+        except Exception as e:
+            print(f"⚠️  无法获取最佳端点，使用默认配置: {e}")
+            # 回退到默认配置
+            return Network.testnet() if self.network_type == "testnet" else Network.mainnet()
+
     async def init_client(self):
         """Initialize the Injective client and required components"""
         try:
+            print(f"🔌 初始化 Injective 客户端...")
+            print(f"   网络类型: {self.network_type}")
+            print(f"   链ID: {self.network.chain_id}")
+            print(f"   LCD端点: {self.network.lcd_endpoint}")
+            print(f"   gRPC端点: {self.network.grpc_endpoint}")
+            
             self.client = AsyncClient(self.network)
             self.composer = await self.client.composer()
             await self.client.sync_timeout_height()
@@ -37,8 +72,9 @@ class ChainInteractor:
             self.message_broadcaster = MsgBroadcasterWithPk.new_using_simulation(
                 network=self.network, private_key=self.private_key
             )
+            print("✅ Injective 客户端初始化成功")
         except Exception as e:
-            print(f"Failed to initialize Injective client: {str(e)}")
+            print(f"❌ Injective 客户端初始化失败: {str(e)}")
             raise e
 
     async def build_and_broadcast_tx(self, msg):

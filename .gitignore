@@ -150,6 +150,14 @@ credentials.json
 *_token*
 *_password*
 
+# Blockchain private keys and wallet configs
+agents_config.yaml
+wallet_config.yaml
+*_wallet_config.yaml
+*_private_key*
+*_wallet_private_key*
+env_example.txt
+
 # Spyder project settings
 .spyderproject
 .spyproject

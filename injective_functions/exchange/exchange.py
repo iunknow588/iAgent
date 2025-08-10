@@ -27,22 +27,49 @@ class InjectiveExchange(InjectiveBase):
                 )
             )
             deposits = deposits_response["deposits"]
-            denom_decimals = await fetch_decimal_denoms(self.chain_client.network_type)
+            denom_decimals = await fetch_decimal_denoms(self.chain_client.network_type == "mainnet")
             human_readable_deposits = {}
+            
+            # 为常见代币设置默认小数位数
+            default_decimals = {
+                "inj": 18,
+                "usdt": 6,
+                "usdc": 6,
+                "eth": 18,
+                "btc": 8,
+                "atom": 6,
+                "osmo": 6,
+                "stinj": 18,
+                "peggy0x87aB3B4C8661e07D6372361211B96ed4Dc36B1B5b": 6,  # USDT on Injective
+                "peggy0xA0b86a33E6441b8c4C8C8C8C8C8C8C8C8C8C8C8C8": 6,  # USDC on Injective
+            }
+            
             # checks if the denoms are specified
             if denoms:
                 # iterate through the specified denoms
                 for denom in denoms:
                     # Corner case 1: denom might not be in deposits found in chain data a case when gpt function calling parses wrong args
-                    if denom in deposits and denom in denom_decimals:
+                    if denom in deposits:
+                        # 如果 denom_decimals 为空或当前 denom 不在 denom_decimals 中，使用默认小数位数
+                        if not denom_decimals or denom not in denom_decimals:
+                            token_symbol = denom.lower()
+                            if token_symbol.startswith("peggy"):
+                                decimals = 6
+                            elif token_symbol in default_decimals:
+                                decimals = default_decimals[token_symbol]
+                            else:
+                                decimals = 18
+                        else:
+                            decimals = denom_decimals[denom]
+                        
                         human_readable_deposits[denom] = {
                             "available_balance": str(
                                 int(deposits[denom]["availableBalance"])
-                                / 10 ** int(denom_decimals[denom])
+                                / 10 ** decimals
                             ),
                             "total_balance": str(
                                 int(deposits[denom]["totalBalance"])
-                                / 10 ** int(denom_decimals[denom])
+                                / 10 ** decimals
                             ),
                         }
                     else:
@@ -53,16 +80,27 @@ class InjectiveExchange(InjectiveBase):
             # Otherwise we iterate through all the denoms
             else:
                 for denom, deposit in deposits.items():
-                    if denom in denom_decimals:
-                        human_readable_deposits[denom] = {}
-                        human_readable_deposits[denom]["available_balance"] = str(
-                            int(deposit["availableBalance"])
-                            / 10 ** denom_decimals[denom]
-                        )
+                    # 如果 denom_decimals 为空或当前 denom 不在 denom_decimals 中，使用默认小数位数
+                    if not denom_decimals or denom not in denom_decimals:
+                        token_symbol = denom.lower()
+                        if token_symbol.startswith("peggy"):
+                            decimals = 6
+                        elif token_symbol in default_decimals:
+                            decimals = default_decimals[token_symbol]
+                        else:
+                            decimals = 18
+                    else:
+                        decimals = denom_decimals[denom]
+                    
+                    human_readable_deposits[denom] = {}
+                    human_readable_deposits[denom]["available_balance"] = str(
+                        int(deposit["availableBalance"])
+                        / 10 ** decimals
+                    )
 
-                        human_readable_deposits[denom]["total_balance"] = str(
-                            int(deposit["totalBalance"]) / 10 ** denom_decimals[denom]
-                        )
+                    human_readable_deposits[denom]["total_balance"] = str(
+                        int(deposit["totalBalance"]) / 10 ** decimals
+                    )
             return {"success": True, "result": human_readable_deposits}
         except Exception as e:
             return {"success": False, "error": detailed_exception_info(e)}

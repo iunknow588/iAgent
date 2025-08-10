@@ -21,6 +21,7 @@ import subprocess
 import signal
 from datetime import datetime
 import argparse
+import requests
 
 
 class UnifiedQuickStart:
@@ -312,7 +313,10 @@ class UnifiedQuickStart:
                     print("1. 自动部署")
                     print("2. 运行测试")
                     print("3. 环境检查")
-                    sub_choice = input("请选择 (1-3): ").strip()
+                    print("4. 停止服务器")
+                    print("5. 查看服务器状态")
+                    print("6. 关闭服务端 (HTTP /shutdown)")
+                    sub_choice = input("请选择 (1-6): ").strip()
                     
                     if sub_choice == "1":
                         args = type('Args', (), {'auto': True})()
@@ -323,6 +327,28 @@ class UnifiedQuickStart:
                     elif sub_choice == "3":
                         args = type('Args', (), {'check': True})()
                         self.run_service_mode(args)
+                    elif sub_choice == "4":
+                        args = type('Args', (), {'stop': True})()
+                        self.run_service_mode(args)
+                    elif sub_choice == "5":
+                        args = type('Args', (), {'status': True})()
+                        self.run_service_mode(args)
+                    elif sub_choice == "6":
+                        # 调用 /shutdown 接口优雅关闭服务端
+                        try:
+                            url = "http://localhost:5000/shutdown"
+                            token = input("如设置 SERVER_SHUTDOWN_TOKEN，请输入令牌（可留空）: ").strip()
+                            payload = {"token": token} if token else {}
+                            print("请求关闭服务端中...")
+                            resp = requests.post(url, json=payload, timeout=5)
+                            if resp.status_code == 200:
+                                print("✅ 服务端已接收关闭请求")
+                            elif resp.status_code == 403:
+                                print("❌ 未授权，令牌无效或缺失")
+                            else:
+                                print(f"❌ 关闭失败: HTTP {resp.status_code} - {resp.text}")
+                        except Exception as e:
+                            print(f"❌ 关闭请求异常: {e}")
                 
                 elif choice == "3":
                     # 客户端交互
