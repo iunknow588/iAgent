@@ -1,3 +1,8 @@
+cc:
+  address: inj1n7vge7t7kch5450p93vwenm2h759gw5x8hsedn
+  created_at: '2025-08-10T13:29:00.371067'
+  network: testnet
+  private_key: 0b674611df714b193ba729c61b2ba40e8a5c78333ce0649cf8bdbdbdc5c2d89c
 li:
   address: inj1cv3w6hgpqehlwk760984q23e3hcn6dg4rucmpu
   created_at: '2025-08-10T11:46:36.931496'
