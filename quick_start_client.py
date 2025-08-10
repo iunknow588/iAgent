@@ -48,11 +48,15 @@ class InjectiveCLI:
     
     def _init_smart_command_system(self):
         """初始化智能命令识别系统"""
-        # 保留基本的命令分类，但主要用于简单命令
-        self.simple_commands = {
-            "help", "ping", "clear", "quit", "session",
+        # 特殊命令（General）- 这些是系统级别的命令，需要特殊处理
+        self.special_commands = {
+            "quit", "clear", "help", "history", "ping", "debug", "session"
+        }
+        
+        # 代理管理命令（Agents）- 这些是代理相关的系统命令
+        self.agent_commands = {
             "switch_network", "create_agent", "delete_agent", 
-            "switch_agent", "list_agents", "shutdown_server"
+            "switch_agent", "list_agents", "shutdown_server", "netcheck"
         }
         
         # 保留复合命令前缀，用于向后兼容
@@ -83,24 +87,123 @@ class InjectiveCLI:
         
         将复杂命令识别交给AI模型处理，只处理简单命令
         """
-        # 1. 处理代理相关命令（这些是系统级别的命令）
-        if command.lower() in self.simple_commands:
+        # 1. 处理特殊命令（General）- 这些是系统级别的命令
+        if command.lower() in self.special_commands:
+            if self._handle_special_commands(command, args):
+                return True
+        
+        # 2. 处理代理相关命令（Agents）- 这些是代理管理命令
+        if command.lower() in self.agent_commands:
             if self.handle_agent_commands(command, args):
                 return True
         
-        # 2. 处理直接命令（如 transfer, balance 等）
+        # 3. 处理直接命令（如 transfer, balance 等）
         if command.lower() in self.direct_commands:
             if self._handle_direct_command(command, args):
                 return True
         
-        # 3. 处理复合命令（向后兼容，如 check balance, get balance 等）
+        # 4. 处理复合命令（向后兼容，如 check balance, get balance 等）
         if command.lower() in self.composite_prefixes and args:
             if self._handle_composite_command(command, args):
                 return True
         
-        # 4. 复杂命令交给AI处理
+        # 5. 复杂命令交给AI处理
         return False
     
+    def _handle_special_commands(self, command: str, args: str) -> bool:
+        """
+        处理特殊命令（General）- 这些是系统级别的命令
+        
+        包括：
+        - quit: 退出程序
+        - clear: 清屏
+        - help: 显示帮助
+        - history: 显示命令历史
+        - ping: 测试服务器连接
+        - debug: 切换调试模式
+        - session: 显示会话信息
+        """
+        try:
+            if command == "quit":
+                print(f"\n{Fore.YELLOW}Exiting Injective Chain CLI... 👋{Style.RESET_ALL}")
+                sys.exit(0)
+                
+            elif command == "clear":
+                self.clear_screen()
+                self.display_banner()
+                return True
+                
+            elif command == "help":
+                self.display_banner()
+                return True
+                
+            elif command == "history":
+                if hasattr(self, 'command_history') and self.command_history:
+                    print(f"{Fore.CYAN}📜 命令历史记录:{Style.RESET_ALL}")
+                    for i, cmd in enumerate(self.command_history[-10:], 1):  # 显示最近10条
+                        print(f"  {i:2d}. {cmd}")
+                else:
+                    print(f"{Fore.YELLOW}📜 暂无命令历史记录{Style.RESET_ALL}")
+                return True
+                
+            elif command == "ping":
+                # 实现ping命令
+                try:
+                    url = f"{self.api_url.rstrip('/')}/ping"
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    
+                    print(f"{Fore.YELLOW}Pinging server at {url}...{Style.RESET_ALL}")
+                    response = requests.get(url, headers=headers, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        print(f"{Fore.GREEN}✅ Server is online!{Style.RESET_ALL}")
+                        print(f"   Status: {data.get('status', 'unknown')}")
+                        print(f"   Version: {data.get('version', 'unknown')}")
+                        print(f"   Timestamp: {data.get('timestamp', 'unknown')}")
+                    else:
+                        print(f"{Fore.RED}❌ Server responded with status code: {response.status_code}{Style.RESET_ALL}")
+                        
+                except requests.exceptions.Timeout:
+                    print(f"{Fore.RED}❌ Request timed out. Server may be offline or slow.{Style.RESET_ALL}")
+                except requests.exceptions.ConnectionError:
+                    print(f"{Fore.RED}❌ Connection failed. Server may be offline.{Style.RESET_ALL}")
+                except Exception as e:
+                    print(f"{Fore.RED}❌ Ping failed: {str(e)}{Style.RESET_ALL}")
+                return True
+                
+            elif command == "debug":
+                # 切换调试模式
+                self.debug = not self.debug
+                status = "开启" if self.debug else "关闭"
+                print(f"{Fore.GREEN}✅ 调试模式已{status}{Style.RESET_ALL}")
+                return True
+                
+            elif command == "session":
+                # 显示会话信息
+                print(f"{Fore.CYAN}📊 会话信息:{Style.RESET_ALL}")
+                print(f"  Session ID: {self.session_id}")
+                print(f"  API URL: {self.api_url}")
+                print(f"  Current Network: {self._format_network_details()}")
+                print(f"  Debug Mode: {'开启' if self.debug else '关闭'}")
+                
+                current_agent = self.agent_manager.get_current_agent()
+                if current_agent:
+                    print(f"  Current Agent: {self.agent_manager.current_agent}")
+                    print(f"  Agent Address: {current_agent['address']}")
+                else:
+                    print(f"  Current Agent: 未选择")
+                
+                if hasattr(self, 'command_history'):
+                    print(f"  Commands Executed: {len(self.command_history)}")
+                return True
+                
+            return False
+            
+        except Exception as e:
+            print(f"{Fore.RED}❌ 处理特殊命令时出错: {str(e)}{Style.RESET_ALL}")
+            return False
+
     def _handle_ai_command(self, user_input: str) -> bool:
         """
         通过AI模型处理复杂命令
@@ -442,37 +545,7 @@ class InjectiveCLI:
     def handle_agent_commands(self, command: str, args: str) -> bool:
         """Handle agent-related commands"""
         try:
-            if command == "help":
-                self.display_banner()
-                return True
-                
-            elif command == "ping":
-                # 实现ping命令
-                try:
-                    url = f"{self.api_url.rstrip('/')}/ping"
-                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                    
-                    print(f"{Fore.YELLOW}Pinging server at {url}...{Style.RESET_ALL}")
-                    response = requests.get(url, headers=headers, timeout=10)
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        print(f"{Fore.GREEN}✅ Server is online!{Style.RESET_ALL}")
-                        print(f"   Status: {data.get('status', 'unknown')}")
-                        print(f"   Version: {data.get('version', 'unknown')}")
-                        print(f"   Timestamp: {data.get('timestamp', 'unknown')}")
-                    else:
-                        print(f"{Fore.RED}❌ Server responded with status code: {response.status_code}{Style.RESET_ALL}")
-                        
-                except requests.exceptions.Timeout:
-                    print(f"{Fore.RED}❌ Request timed out. Server may be offline or slow.{Style.RESET_ALL}")
-                except requests.exceptions.ConnectionError:
-                    print(f"{Fore.RED}❌ Connection failed. Server may be offline.{Style.RESET_ALL}")
-                except Exception as e:
-                    print(f"{Fore.RED}❌ Ping failed: {str(e)}{Style.RESET_ALL}")
-                return True
-                
-            elif command == "switch_network":
+            if command == "switch_network":
                 if not args or args.lower() not in ["mainnet", "testnet"]:
                     print(
                         f"{Fore.RED}Error: Please specify 'mainnet' or 'testnet'{Style.RESET_ALL}"
@@ -527,49 +600,7 @@ class InjectiveCLI:
                     self.list_agents_by_network(testnet_agents, "testnet")
                 return True
                 
-            elif command == "session":
-                # 显示当前会话信息
-                print(f"{Fore.CYAN}📋 当前会话信息{Style.RESET_ALL}")
-                print(f"   会话ID: {self.session_id}")
-                print(f"   服务器地址: {self.api_url}")
-                print(f"   调试模式: {'开启' if self.debug else '关闭'}")
-                
-                # 显示当前网络信息
-                current_network = self.agent_manager.get_current_network()
-                print(f"   当前网络: {current_network.upper()}")
-                
-                # 显示当前代理信息
-                current_agent = self.agent_manager.get_current_agent()
-                if current_agent:
-                    print(f"   当前代理: {current_agent.get('name', 'unknown')}")
-                    print(f"   代理地址: {current_agent.get('address', 'unknown')}")
-                    print(f"   创建时间: {current_agent.get('created_at', 'unknown')}")
-                else:
-                    print(f"   当前代理: {Fore.YELLOW}未选择{Style.RESET_ALL}")
-                
-                # 显示会话统计信息
-                print(f"\n{Fore.CYAN}📊 会话统计{Style.RESET_ALL}")
-                print(f"   会话开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"   运行时长: {self._get_session_duration()}")
-                
-                return True
-                
-            elif command == "debug":
-                # 切换调试模式
-                self.debug = not self.debug
-                status = "开启" if self.debug else "关闭"
-                print(f"{Fore.GREEN}✅ 调试模式已{status}{Style.RESET_ALL}")
-                return True
-                
-            elif command == "history":
-                # 显示命令历史
-                print(f"{Fore.CYAN}📜 命令历史{Style.RESET_ALL}")
-                if hasattr(self, 'command_history') and self.command_history:
-                    for i, cmd in enumerate(self.command_history[-10:], 1):  # 显示最近10条
-                        print(f"   {i:2d}. {cmd}")
-                else:
-                    print(f"   {Fore.YELLOW}暂无命令历史{Style.RESET_ALL}")
-                return True
+
 
             elif command == "shutdown_server":
                 try:
@@ -618,7 +649,7 @@ class InjectiveCLI:
                 
             else:
                 # 检查是否是拼写错误
-                known_commands = ["help", "ping", "switch_network", "create_agent", "delete_agent", "switch_agent", "list_agents", "session", "debug", "history", "check", "get", "show", "view"]
+                known_commands = ["switch_network", "create_agent", "delete_agent", "switch_agent", "list_agents", "shutdown_server", "netcheck", "check", "get", "show", "view"]
                 suggestions = []
                 
                 for known_cmd in known_commands:
@@ -1223,18 +1254,6 @@ class InjectiveCLI:
         while True:
             try:
                 user_input = input(f"{Fore.GREEN}Command: {Style.RESET_ALL}").strip()
-
-                if user_input.lower() == "quit":
-                    print(
-                        f"\n{Fore.YELLOW}Exiting Injective Chain CLI... 👋{Style.RESET_ALL}"
-                    )
-                    break
-
-                # Handle 'clear' command
-                if user_input.lower() == "clear":
-                    self.clear_screen()
-                    self.display_banner()
-                    continue
 
                 # Split command and arguments
                 parts = user_input.split(maxsplit=1)

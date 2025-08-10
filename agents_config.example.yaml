@@ -1,0 +1,22 @@
+# Injective Agent 配置文件示例
+# 复制此文件为 agents_config.yaml 并填入您的真实信息
+
+# 示例代理配置
+example_agent:
+  address: inj1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  created_at: '2024-01-01T00:00:00.000000'
+  network: testnet  # 可选: testnet 或 mainnet
+  private_key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# 另一个示例代理
+another_agent:
+  address: inj1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  created_at: '2024-01-01T00:00:00.000000'
+  network: mainnet
+  private_key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# 配置说明:
+# - address: 您的 Injective 钱包地址
+# - created_at: 代理创建时间 (ISO 格式)
+# - network: 网络环境 (testnet 用于测试, mainnet 用于生产)
+# - private_key: 您的钱包私钥 (请妥善保管，不要泄露给他人)

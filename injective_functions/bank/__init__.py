@@ -12,16 +12,32 @@ class InjectiveBank(InjectiveBase):
         super().__init__(chain_client)
 
     async def transfer_funds(
-        self, amount: Decimal, denom: str = None, to_address: str = None
+        self, amount, denom: str = None, to_address: str = None
     ) -> Dict:
-
-        msg = self.chain_client.composer.MsgSend(
-            from_address=self.chain_client.address.to_acc_bech32(),
-            to_address=str(to_address),
-            amount=float(amount),
-            denom=denom,
-        )
-        return await self.chain_client.build_and_broadcast_tx(msg)
+        try:
+            # 确保 amount 是 Decimal 类型
+            if isinstance(amount, str):
+                amount = Decimal(amount)
+            elif not isinstance(amount, Decimal):
+                amount = Decimal(str(amount))
+            
+            # 确保 denom 是字符串类型
+            if denom is None:
+                return {"success": False, "error": "denom parameter is required"}
+            
+            # 验证地址格式
+            if not to_address:
+                return {"success": False, "error": "to_address parameter is required"}
+            
+            msg = self.chain_client.composer.MsgSend(
+                from_address=self.chain_client.address.to_acc_bech32(),
+                to_address=str(to_address),
+                amount=float(amount),
+                denom=str(denom),
+            )
+            return await self.chain_client.build_and_broadcast_tx(msg)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     async def query_balance(self, denom: str) -> Dict:
         try:
